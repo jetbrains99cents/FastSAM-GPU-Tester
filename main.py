@@ -9,8 +9,9 @@ from PIL import Image  # Pillow for image loading, though ultralytics also handl
 
 # --- Configuration ---
 IMAGE_DIR = "images"  # Directory containing your test images
-SUPPORTED_EXTENSIONS = ["*.jpg", "*.jpeg", "*.png"]  # Supported image file extensions
-FASTSAM_MODEL_NAME = 'FastSAM-s.pt'  # Or 'FastSAM-x.pt' for a larger model
+SUPPORTED_EXTENSIONS = ["*.jpg", "*.jpeg", "*.png", "*.bmp"]
+# MODIFIED: Changed model from FastSAM-s.pt to FastSAM-x.pt
+FASTSAM_MODEL_NAME = 'FastSAM-x.pt'  # Using the extra large model
 
 
 # --- Helper Functions ---
@@ -55,7 +56,10 @@ def load_model(model_name, device):
     """
     print(f"Loading model '{model_name}' onto {device}...")
     try:
-        model = YOLO(model_name)  # Or FastSAM(model_name) if using FastSAM class directly
+        # The YOLO class from ultralytics can directly load FastSAM models.
+        # If you have a specific FastSAM class from ultralytics you prefer, you can use that too.
+        # For example, if 'FastSAM' class is available and preferred: model = FastSAM(model_name)
+        model = YOLO(model_name)
         model.to(device)  # Ensure model is on the correct device
         print(f"Model '{model_name}' loaded successfully on {device}.")
         return model
@@ -70,20 +74,12 @@ def segment_image(model, image_path, device):
     """
     try:
         # Ultralytics models can take image paths directly
-        # For more control or if using Pillow explicitly:
-        # img = Image.open(image_path).convert("RGB")
-
         start_time = time.perf_counter()
         # The predict method handles moving data to the model's device implicitly
-        # if the input is a path, PIL image, or numpy array.
-        # Forcing device here is more for the model loading itself.
+        # The 'device' argument in predict can ensure operations run on the target device,
+        # though the model itself is already moved to 'device' in load_model.
         results = model.predict(source=image_path, device=device, verbose=False)
         end_time = time.perf_counter()
-
-        # You can process results here if needed, e.g., count masks, save images
-        # For speed testing, the predict call itself is the main work.
-        # num_masks = len(results[0].masks) if results[0].masks is not None else 0
-        # print(f"Found {num_masks} masks in {os.path.basename(image_path)}")
 
         return end_time - start_time
     except Exception as e:
@@ -105,13 +101,14 @@ def run_benchmark(model_name, image_paths, device_name):
 
     print(f"\n--- Starting Benchmark on {device_name.upper()} ---")
 
-    # Optional: Warm-up run (can help stabilize timings, especially for GPU)
-    # print(f"Performing a warm-up run on {device_name}...")
-    # segment_image(model, image_paths[0], device_name)
-    # print("Warm-up complete.")
-
     timings = []
     total_time_for_device = 0.0
+
+    # Optional: Warm-up run for the first image to stabilize timings, especially for GPU
+    if image_paths:
+        print(f"Performing a warm-up run on {device_name} with {os.path.basename(image_paths[0])}...")
+        segment_image(model, image_paths[0], device_name)
+        print("Warm-up complete.")
 
     for i, img_path in enumerate(image_paths):
         print(f"Processing image {i + 1}/{len(image_paths)}: {os.path.basename(img_path)} on {device_name}...")
@@ -123,7 +120,11 @@ def run_benchmark(model_name, image_paths, device_name):
         else:
             print(f"Skipping image {os.path.basename(img_path)} due to error.")
 
-    if timings:
+    # Exclude warm-up run from average if it was done and timings were collected for it
+    # For simplicity here, we're including it if it was part of the loop.
+    # If a dedicated warm-up was done outside the loop, timings list would be clean.
+
+    if timings:  # Check if any images were successfully processed
         avg_time = sum(timings) / len(timings)
         print(f"Average time per image on {device_name.upper()}: {avg_time:.4f} seconds")
     else:
@@ -188,10 +189,10 @@ if __name__ == "__main__":
         avg_gpu_time = sum(gpu_timings) / len(gpu_timings)
         print(f"GPU Average Time per Image: {avg_gpu_time:.4f} seconds")
         print(f"GPU Total Time for {len(gpu_timings)} images: {gpu_total_time:.4f} seconds")
-        if cpu_timings:
+        if cpu_timings and avg_gpu_time > 0:  # Ensure no division by zero
             speedup = avg_cpu_time / avg_gpu_time
             print(f"\nGPU Speedup over CPU (based on average time): {speedup:.2f}x")
-    elif gpu_available_for_torch:  # If we tried to run GPU but got no results
+    elif gpu_available_for_torch:
         print("GPU benchmark did not produce any results despite CUDA being available.")
     else:
         print("GPU benchmark was skipped.")
